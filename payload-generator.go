@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/sys/windows"
+
 	uquic "github.com/refraction-networking/uquic"
 	uhttp3 "github.com/refraction-networking/uquic/http3"
 	utls "github.com/refraction-networking/utls"
@@ -87,14 +89,16 @@ type protocols_TLS_type []struct {
 	name            string
 	id              int
 	additional_info string
+	filename        string
 }
 
-func (p *protocols_TLS_type) add(_name string, _id int, _info string) {
+func (p *protocols_TLS_type) add(_name string, _id int, _info string, _filename string) {
 	*p = append(*p, struct {
 		name            string
 		id              int
 		additional_info string
-	}{name: _name, id: _id, additional_info: _info})
+		filename        string
+	}{name: _name, id: _id, additional_info: _info, filename: _filename})
 }
 
 func (p *protocols_TLS_type) getID(_name string) int {
@@ -107,6 +111,14 @@ func (p *protocols_TLS_type) getID(_name string) int {
 }
 
 func init() {
+	stdout := windows.Handle(os.Stdout.Fd())
+	var mode uint32
+
+	if err := windows.GetConsoleMode(stdout, &mode); err == nil {
+		mode |= windows.ENABLE_VIRTUAL_TERMINAL_PROCESSING
+		_ = windows.SetConsoleMode(stdout, mode)
+	}
+
 	browsers_TLS_CH.add("Firefox 120", &utls.HelloFirefox_120, "")
 	browsers_TLS_CH.add("Chrome 102", &utls.HelloChrome_102, "")
 	browsers_TLS_CH.add("Chrome 106 (Shuffle)", &utls.HelloChrome_106_Shuffle, "Chrome added TLS extension shuffler")
@@ -128,9 +140,9 @@ func init() {
 	browsers_QUIC_Initial.add("Chrome 115 (IPv4)", &uquic.QUICChrome_115_IPv4, "")
 	browsers_QUIC_Initial.add("Chrome 115 (IPv6)", &uquic.QUICChrome_115_IPv6, "")
 
-	protocols_TLS.add("TLS 1.2", 0, "")
-	protocols_TLS.add("TLS 1.3", 1, "")
-	protocols_TLS.add("TLS 1.3 -> 1.2", 2, "TLS 1.3 with fallback to TLS 1.2")
+	protocols_TLS.add("TLS 1.2", 0, "", "TLS_12")
+	protocols_TLS.add("TLS 1.3", 1, "", "TLS_13")
+	protocols_TLS.add("TLS 1.3 -> 1.2", 2, "TLS 1.3 with fallback to TLS 1.2", "TLS_12+TLS_13")
 }
 
 func main() {
@@ -473,7 +485,7 @@ func listenTCP(cropAt int, browser_id *int, protocol_id int) {
 	hexString := hex.EncodeToString(buf)
 	fmt.Printf("  Hex for TLS ClientHello: %s\n", hexString)
 
-	saveToBinaryFile(buf, "tls_clienthello", protocols_TLS[protocol_id].name, browsers_TLS_CH[*browser_id].name)
+	saveToBinaryFile(buf, "tls_clienthello", protocols_TLS[protocol_id].filename, browsers_TLS_CH[*browser_id].name)
 
 	tcpListenerQuitted <- true
 }

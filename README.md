@@ -25,5 +25,15 @@
 - маскировка под определенный SNI
 - возможность экспортирования в `.bin` файл
 
+# 💻 CLI-ИСПОЛЬЗОВАНИЕ
+```
+.\payload-generator -help    : none; show help menu
+.\payload-generator -tls     : string; which browser to mimic TLS CLIENT-HELLO
+.\payload-generator -tls-ver : string; which TLS version TLS CLIENT-HELLO
+.\payload-generator -quic    : string; which browser to mimic QUIC-INITIAL
+.\payload-generator -crop    : int; at which byte to crop binary
+.\payload-generator -sni     : string; which SNI to use for payload
+```
+
 # ⚖️ ЛИЦЕНЗИЯ
 Утилита распространяется на условиях [GNU](https://github.com/FunsyMe/payload-generator/blob/main/LICENSE) лицензии 

@@ -5,12 +5,14 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/hex"
+	"flag"
 	"fmt"
 	"net"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"golang.org/x/sys/windows"
@@ -34,6 +36,12 @@ var (
 
 	cropAt int
 	SNI    string
+
+	quicFlag   string
+	tlsFlag    string
+	tlsVerFlag string
+	cropFlag   int
+	sniFlag    string
 
 	loopbackPort = 4343
 	defaultSNI   = "fonts.google.com"
@@ -119,55 +127,120 @@ func init() {
 		_ = windows.SetConsoleMode(stdout, mode)
 	}
 
-	browsers_TLS_CH.add("Firefox 120", &utls.HelloFirefox_120, "")
-	browsers_TLS_CH.add("Chrome 102", &utls.HelloChrome_102, "")
+	browsers_TLS_CH.add("Firefox 120", &utls.HelloFirefox_120, "Nothing special")
+	browsers_TLS_CH.add("Chrome 102", &utls.HelloChrome_102, "Nothing special")
 	browsers_TLS_CH.add("Chrome 106 (Shuffle)", &utls.HelloChrome_106_Shuffle, "Chrome added TLS extension shuffler")
 	browsers_TLS_CH.add("Chrome 112 (PSK, Shuffle)", &utls.HelloChrome_112_PSK_Shuf, "Chrome added Pre-shared Key extension, but uTLS doesn't have full support for it")
 	browsers_TLS_CH.add("Chrome 115 (PQ)", &utls.HelloChrome_115_PQ, "Chrome added Post-Quantum Key Agreement extension, but uTLS doesn't have full support for it")
 	browsers_TLS_CH.add("Chrome 120 (ECH)", &utls.HelloChrome_120, "Chrome added Encrypted ClientHello")
-	browsers_TLS_CH.add("Chrome 120 (ECH, PQ)", &utls.HelloChrome_120_PQ, "")
+	browsers_TLS_CH.add("Chrome 120 (ECH, PQ)", &utls.HelloChrome_120_PQ, "Nothing special")
 	browsers_TLS_CH.add("Chrome 131 (ML-KEM curve)", &utls.HelloChrome_131, "Chrome added Module-Lattice Key Encapsulation Mechanism a.k.a. Kyber")
-	browsers_TLS_CH.add("Android 11", &utls.HelloAndroid_11_OkHttp, "")
-	browsers_TLS_CH.add("Edge 85", &utls.HelloEdge_85, "")
+	browsers_TLS_CH.add("Android 11", &utls.HelloAndroid_11_OkHttp, "Nothing special")
+	browsers_TLS_CH.add("Edge 85", &utls.HelloEdge_85, "Nothing special")
 	browsers_TLS_CH.add("Edge 106", &utls.HelloEdge_106, "Edge 106 seems to be incompatible with uTLS library, according to them")
-	browsers_TLS_CH.add("Safari 16.0", &utls.HelloSafari_16_0, "")
+	browsers_TLS_CH.add("Safari 16.0", &utls.HelloSafari_16_0, "Nothing special")
 	browsers_TLS_CH.add("Random ALPN", &utls.HelloRandomizedALPN, "Randomize fields, use Application-Layer Protocol Negotiation TLS extension")
 	browsers_TLS_CH.add("Random", &utls.HelloRandomizedNoALPN, "Randomize fields")
 
 	browsers_QUIC_Initial.add("Firefox 116 (A)", &uquic.QUICFirefox_116A, "Destination Connection ID length = 8 bytes")
 	browsers_QUIC_Initial.add("Firefox 116 (B)", &uquic.QUICFirefox_116B, "Destination Connection ID length = 9 bytes")
 	browsers_QUIC_Initial.add("Firefox 116 (C)", &uquic.QUICFirefox_116C, "Destination Connection ID length = 15 bytes")
-	browsers_QUIC_Initial.add("Chrome 115 (IPv4)", &uquic.QUICChrome_115_IPv4, "")
-	browsers_QUIC_Initial.add("Chrome 115 (IPv6)", &uquic.QUICChrome_115_IPv6, "")
+	browsers_QUIC_Initial.add("Chrome 115 (IPv4)", &uquic.QUICChrome_115_IPv4, "Nothing special")
+	browsers_QUIC_Initial.add("Chrome 115 (IPv6)", &uquic.QUICChrome_115_IPv6, "Nothing special")
 
-	protocols_TLS.add("TLS 1.2", 0, "", "TLS_12")
-	protocols_TLS.add("TLS 1.3", 1, "", "TLS_13")
-	protocols_TLS.add("TLS 1.3 -> 1.2", 2, "TLS 1.3 with fallback to TLS 1.2", "TLS_12+TLS_13")
+	protocols_TLS.add("TLS 1.2", 0, "Nothing special", "TLS_12")
+	protocols_TLS.add("TLS 1.3", 1, "Nothing special", "TLS_13")
+	protocols_TLS.add("TLS 1.3 -> TLS 1.2", 2, "TLS 1.3 with fallback to TLS 1.2", "TLS_12+TLS_13")
+
+	flag.StringVar(&tlsFlag, "tls", "skip", "string; which browser to mimic TLS CLIENT-HELLO")
+	flag.StringVar(&tlsVerFlag, "tls-ver", "TLS 1.2", "string; which TLS version TLS CLIENT-HELLO")
+	flag.StringVar(&quicFlag, "quic", "skip", "string; which browser to mimic QUIC-INITIAL")
+	flag.IntVar(&cropFlag, "crop", -1, "int; at which byte to crop binary")
+	flag.StringVar(&sniFlag, "sni", defaultSNI, "string; which SNI to use for payload")
+
+	flag.Usage = func() {
+		fmt.Printf("payload-generator v%s by Ori & Funsy\n", version)
+		w := tabwriter.NewWriter(os.Stdout, 0, 0, 1, ' ', 0)
+
+		for _, name := range []string{"tls", "tls-ver", "quic", "crop", "sni"} {
+			f := flag.Lookup(name)
+			fmt.Fprintf(w, "  -%s\t: %s\t(default: %s)\n", f.Name, f.Usage, f.DefValue)
+		}
+		w.Flush()
+
+		fmt.Printf("\nsupported TLS CLIENT-HELLO browsers\n")
+		for _, browser := range browsers_TLS_CH {
+			fmt.Fprintf(w, "  %s\t: %s\n", browser.name, browser.additional_info)
+		}
+		w.Flush()
+
+		fmt.Printf("\nsupported TLS CLIENT-HELLO versions\n")
+		for _, browser := range protocols_TLS {
+			fmt.Fprintf(w, "  %s\t: %s\n", browser.name, browser.additional_info)
+		}
+		w.Flush()
+
+		fmt.Printf("\nsupported QUIC INITIAL browsers\n")
+		for _, browser := range browsers_QUIC_Initial {
+			fmt.Fprintf(w, "  %s\t: %s\n", browser.name, browser.additional_info)
+		}
+		w.Flush()
+	}
+
+	flag.Parse()
 }
 
 func main() {
 	fmt.Printf("\npayload-generator v%s by Ori & Funsy\n\n----------------------------------------\n\n", version)
-	var bTLS_id, bQUIC_id, pTLS_id int = -1, -1, -1
+	var bTLS_id, pTLS_id, bQUIC_id int = -1, -1, -1
 
-	fmt.Println(":: TLS CLIENT-HELLO")
-	bTLS_id, pTLS_id = mimicBrowserTLS()
-	fmt.Println(bTLS_id, pTLS_id)
-	fmt.Print("\033[H\033[2J\n")
+	if flag.NFlag() > 0 {
+		if tlsFlag != "skip" {
+			bTLS_id = browsers_TLS_CH.getID(tlsFlag)
+			if bTLS_id < 0 {
+				check(fmt.Errorf("Unknown browser: %s", tlsFlag), false)
+			}
 
-	fmt.Println(":: QUIC INITIAL")
-	bQUIC_id = mimicBrowserQUIC()
-	fmt.Print("\033[H\033[2J\n")
+			pTLS_id = protocols_TLS.getID(tlsVerFlag)
+			if pTLS_id < 0 {
+				check(fmt.Errorf("Unknown TLS version: %s", tlsVerFlag), false)
+			}
+		}
 
-	fmt.Println(":: SETTINGS")
-	if bTLS_id < 0 && bQUIC_id < 0 {
-		fmt.Print("\033[H\033[2J")
-		check(fmt.Errorf("Nothing to do"))
+		if quicFlag != "skip" {
+			bQUIC_id = browsers_QUIC_Initial.getID(quicFlag)
+			if bQUIC_id < 0 {
+				check(fmt.Errorf("Unknown browser: %s", tlsFlag), false)
+			}
+		}
+
+		fmt.Println(bTLS_id, pTLS_id)
+		if bTLS_id < 0 && bQUIC_id < 0 {
+			check(fmt.Errorf("Nothing to do"), false)
+		}
+
+		cropAt = cropFlag
+		SNI = sniFlag
+	} else {
+		fmt.Println(":: TLS CLIENT-HELLO")
+		bTLS_id, pTLS_id = mimicBrowserTLS()
+		fmt.Println(bTLS_id, pTLS_id)
+		fmt.Print("\033[H\033[2J\n")
+
+		fmt.Println(":: QUIC INITIAL")
+		bQUIC_id = mimicBrowserQUIC()
+		fmt.Print("\033[H\033[2J\n")
+
+		if bTLS_id < 0 && bQUIC_id < 0 {
+			fmt.Print("\033[H\033[2J")
+			check(fmt.Errorf("Nothing to do"), true)
+		}
+
+		fmt.Println(":: SETTINGS")
+		cropAt = inputCrop()
+		SNI = inputSNI()
+		fmt.Print("\033[H\033[2J\n")
 	}
-
-	cropAt = inputCrop()
-	SNI = inputSNI()
-
-	fmt.Print("\033[H\033[2J\n")
 
 	fmt.Print(":: INFO\n")
 	fmt.Printf("TLS CLientHello: %t\nQUIC Initial: %t\n", (bTLS_id >= 0), (bQUIC_id >= 0))
@@ -211,8 +284,12 @@ func main() {
 		fmt.Printf("\n----------------------------------------\n\n")
 	}
 
-	fmt.Println("All done, press [ENTER] to exit...")
-	fmt.Scanln()
+	if flag.NFlag() > 0 {
+		fmt.Println("All done...")
+	} else {
+		fmt.Println("All done, press [ENTER] to exit...")
+		fmt.Scanln()
+	}
 
 	os.Exit(0)
 }
@@ -442,7 +519,7 @@ func sendRequestQUIC(browser_id *int) {
 	}
 
 	quicSpec, err := uquic.QUICID2Spec(*browsers_QUIC_Initial[*browser_id].uquic_pointer)
-	check(err)
+	check(err, true)
 
 	uRoundTripper := uhttp3.GetURoundTripper(
 		roundTripper,
@@ -462,7 +539,7 @@ func sendRequestQUIC(browser_id *int) {
 
 func listenTCP(cropAt int, browser_id *int, protocol_id int) {
 	tcpListener, err := net.Listen("tcp", fmt.Sprintf(":%d", loopbackPort))
-	check(err)
+	check(err, true)
 	defer tcpListener.Close()
 
 	tcpListenerReady <- true
@@ -470,11 +547,11 @@ func listenTCP(cropAt int, browser_id *int, protocol_id int) {
 	buf := make([]byte, 65535)
 
 	tcpConn, err := tcpListener.Accept()
-	check(err)
+	check(err, true)
 	defer tcpConn.Close()
 
 	n, err := tcpConn.Read(buf)
-	check(err)
+	check(err, true)
 
 	if cropAt < 0 {
 		buf = buf[:n]
@@ -493,7 +570,7 @@ func listenTCP(cropAt int, browser_id *int, protocol_id int) {
 func listenUDP(cropAt int, browser_id *int) {
 
 	udpConn, err := net.ListenUDP("udp", &net.UDPAddr{Port: loopbackPort})
-	check(err)
+	check(err, true)
 	defer udpConn.Close()
 
 	buf := make([]byte, 65535)
@@ -501,7 +578,7 @@ func listenUDP(cropAt int, browser_id *int) {
 	udpListenerReady <- true
 
 	n, _, err := udpConn.ReadFromUDP(buf)
-	check(err)
+	check(err, true)
 
 	if cropAt < 0 {
 		buf = buf[:n]
@@ -531,18 +608,20 @@ func saveToBinaryFile(b []byte, marker string, tlsVer string, browser string) {
 	}
 
 	err := os.WriteFile(filename, b, 0200)
-	check(err)
+	check(err, true)
 
 	fmt.Printf("> Saved %d bytes as %s\n", len(b), filename)
 }
 
-func check(err error) {
+func check(err error, input bool) {
 	switch err {
 	case nil:
 		return
 	default:
 		fmt.Printf(":: ERROR\n%s", err)
-		fmt.Scanln()
+		if input {
+			fmt.Scanln()
+		}
 		os.Exit(1)
 	}
 }

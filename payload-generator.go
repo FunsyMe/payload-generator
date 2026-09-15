@@ -22,7 +22,7 @@ import (
 	utls "github.com/refraction-networking/utls"
 )
 
-const version = "0.0.1"
+const version = "0.0.2"
 
 var (
 	tcpListenerReady   = make(chan bool)
